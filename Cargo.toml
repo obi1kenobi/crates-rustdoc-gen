@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.62"
+crates_io_api = "0.8.0"
 duct = "0.13.5"
