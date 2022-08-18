@@ -99,26 +99,105 @@ fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()
         "json"
     )
         .dir(&local_repo_path)
-        .run();
-    if explicit_pkg_build.is_err() {
-        // Some crates (e.g. `syn` at `github.com/dtolnay/syn`) contain an ambiguous definition
-        // of the package by the name we're lookign for.
-        //
-        // In this case, we try to let rustdoc pick a correct option by default if possible,
-        // and bail otherwise.
-        cmd!(
-            "cargo",
-            "+nightly",
-            "rustdoc",
-            "--all-features",
-            "--",
-            "--document-private-items",
-            "-Zunstable-options",
-            "--output-format",
-            "json"
-        )
-        .dir(&local_repo_path)
-        .run()?;
+        .stderr_capture()
+        .unchecked()
+        .run()
+        .expect("unchecked run returned error");
+    if !explicit_pkg_build.status.success() {
+        let stderr = String::from_utf8_lossy(&explicit_pkg_build.stderr);
+        if stderr.contains("ambiguous") {
+            // Some crates (e.g. `syn` at `github.com/dtolnay/syn`) contain an ambiguous definition
+            // of the package by the name we're lookign for.
+            //
+            // In this case, we try to let rustdoc pick a correct option by default, which might work.
+            let implicit_pkg_build = cmd!(
+                "cargo",
+                "+nightly",
+                "rustdoc",
+                "--all-features",
+                "--",
+                "--document-private-items",
+                "-Zunstable-options",
+                "--output-format",
+                "json"
+            )
+            .dir(&local_repo_path)
+            .run();
+
+            if implicit_pkg_build.is_err() {
+                // Some packages can't be built with `--all-features`, since some of the features
+                // may conflict with each other or may require other special configuration.
+                // In this case, we try again with only the features enabled by default.
+                cmd!(
+                    "cargo",
+                    "+nightly",
+                    "rustdoc",
+                    "--",
+                    "--document-private-items",
+                    "-Zunstable-options",
+                    "--output-format",
+                    "json"
+                )
+                    .dir(&local_repo_path)
+                    .run()?;
+            }
+        } else if stderr.contains("--lib") && stderr.contains("single target") {
+            let lib_pkg_build = cmd!(
+                "cargo",
+                "+nightly",
+                "rustdoc",
+                "--package",
+                &crate_info.name,
+                "--lib",
+                "--all-features",
+                "--",
+                "--document-private-items",
+                "-Zunstable-options",
+                "--output-format",
+                "json"
+            )
+            .dir(&local_repo_path)
+            .run();
+
+            if lib_pkg_build.is_err() {
+                // Some packages can't be built with `--all-features`, since some of the features
+                // may conflict with each other or may require other special configuration.
+                // In this case, we try again with only the features enabled by default.
+                cmd!(
+                    "cargo",
+                    "+nightly",
+                    "rustdoc",
+                    "--package",
+                    &crate_info.name,
+                    "--lib",
+                    "--",
+                    "--document-private-items",
+                    "-Zunstable-options",
+                    "--output-format",
+                    "json"
+                )
+                    .dir(&local_repo_path)
+                    .run()?;
+            }
+        } else {
+            // Some packages can't be built with `--all-features`, since some of the features
+            // may conflict with each other or may require other special configuration.
+            // In this case, we try again with only the features enabled by default.
+            cmd!(
+                "cargo",
+                "+nightly",
+                "rustdoc",
+                "--package",
+                &crate_info.name,
+                "--",
+                "--document-private-items",
+                "-Zunstable-options",
+                "--output-format",
+                "json"
+            )
+                .dir(&local_repo_path)
+                .run()?;
+        }
     }
 
     // Rustdoc JSON is output under a filename that replaces underscores with dashes.
