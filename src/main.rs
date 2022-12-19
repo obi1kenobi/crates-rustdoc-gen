@@ -40,7 +40,11 @@ fn discover_tag_format(repo_path: &str, crate_name: &str, version: &str) -> Opti
     None
 }
 
-fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()> {
+fn process_github_repo(
+    crate_info: &Crate,
+    repo_path: &str,
+    check_semver: bool,
+) -> anyhow::Result<()> {
     println!("* crate {} *", &crate_info.name);
 
     let org_and_repo_name = repo_path
@@ -68,6 +72,8 @@ fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()
     // We would have loved to be able to get the "max_stable_version" instead,
     // but that's not something the crates_io_api crate supports.
     let max_version = crate_info.max_version.as_str();
+    println!(">> crate {} max version is {max_version}", &crate_info.name);
+
     let tag_name = match discover_tag_format(&local_repo_path, &crate_info.name, max_version) {
         Some(tag_name) => tag_name,
         None => {
@@ -78,6 +84,16 @@ fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()
             return Ok(());
         }
     };
+
+    if check_semver {
+        if let Err(e) = attempt_cargo_semver_checks(&local_repo_path, &crate_info.name) {
+            println!(
+                ">> cargo-semver-checks run failed for crate version
+                {} {max_version} in repo {local_repo_path}: {e}",
+                crate_info.name,
+            )
+        }
+    }
 
     // Check out the that version's tag and build the rustdoc JSON.
     cmd!("git", "checkout", tag_name)
@@ -98,16 +114,16 @@ fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()
         "--output-format",
         "json"
     )
-        .dir(&local_repo_path)
-        .stderr_capture()
-        .unchecked()
-        .run()
-        .expect("unchecked run returned error");
+    .dir(&local_repo_path)
+    .stderr_capture()
+    .unchecked()
+    .run()
+    .expect("unchecked run returned error");
     if !explicit_pkg_build.status.success() {
         let stderr = String::from_utf8_lossy(&explicit_pkg_build.stderr);
         if stderr.contains("ambiguous") {
             // Some crates (e.g. `syn` at `github.com/dtolnay/syn`) contain an ambiguous definition
-            // of the package by the name we're lookign for.
+            // of the package by the name we're looking for.
             //
             // In this case, we try to let rustdoc pick a correct option by default, which might work.
             let implicit_pkg_build = cmd!(
@@ -138,8 +154,8 @@ fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()
                     "--output-format",
                     "json"
                 )
-                    .dir(&local_repo_path)
-                    .run()?;
+                .dir(&local_repo_path)
+                .run()?;
             }
         } else if stderr.contains("--lib") && stderr.contains("single target") {
             let lib_pkg_build = cmd!(
@@ -176,8 +192,8 @@ fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()
                     "--output-format",
                     "json"
                 )
-                    .dir(&local_repo_path)
-                    .run()?;
+                .dir(&local_repo_path)
+                .run()?;
             }
         } else {
             // Some packages can't be built with `--all-features`, since some of the features
@@ -195,8 +211,8 @@ fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()
                 "--output-format",
                 "json"
             )
-                .dir(&local_repo_path)
-                .run()?;
+            .dir(&local_repo_path)
+            .run()?;
         }
     }
 
@@ -218,7 +234,24 @@ fn process_github_repo(crate_info: &Crate, repo_path: &str) -> anyhow::Result<()
     Ok(())
 }
 
+fn attempt_cargo_semver_checks(local_repo_path: &str, package_name: &str) -> anyhow::Result<()> {
+    let cargo_semver_checks_bin = "/home/predrag/.scratch/.rustc-target/cargo-semver-check/target/release/cargo-semver-checks";
+    cmd!(
+        cargo_semver_checks_bin,
+        "semver-checks",
+        "check-release",
+        "--package",
+        package_name,
+    )
+    .dir(&local_repo_path)
+    .run()?;
+
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
+    let check_semver = true;
+
     let client = crates_io_api::SyncClient::new(
         "crates-rustdoc-gen (obi1kenobi82@gmail.com)",
         Duration::from_secs(1),
@@ -235,7 +268,7 @@ fn main() -> anyhow::Result<()> {
     for crate_info in client.crates(query)?.crates.into_iter() {
         if let Some(repository) = crate_info.repository.as_deref() {
             if repository.starts_with(GITHUB_PREFIX) {
-                if let Err(e) = process_github_repo(&crate_info, repository) {
+                if let Err(e) = process_github_repo(&crate_info, repository, check_semver) {
                     failures.push((crate_info, e));
                 }
             } else {
