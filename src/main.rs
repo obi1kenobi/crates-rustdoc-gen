@@ -243,7 +243,7 @@ fn attempt_cargo_semver_checks(local_repo_path: &str, package_name: &str) -> any
         "--package",
         package_name,
     )
-    .dir(&local_repo_path)
+    .dir(local_repo_path)
     .run()?;
 
     Ok(())
