@@ -250,7 +250,7 @@ fn attempt_cargo_semver_checks(local_repo_path: &str, package_name: &str) -> any
 }
 
 fn main() -> anyhow::Result<()> {
-    let check_semver = true;
+    let check_semver = false;
 
     let client = crates_io_api::SyncClient::new(
         "crates-rustdoc-gen (obi1kenobi82@gmail.com)",
