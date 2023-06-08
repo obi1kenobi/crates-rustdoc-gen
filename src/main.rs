@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::Path,
-    time::Duration,
+    time::Duration, collections::BTreeSet,
 };
 
 use crates_io_api::{Crate, CratesQuery, Sort};
@@ -265,7 +265,16 @@ fn main() -> anyhow::Result<()> {
 
     let mut failures = vec![];
 
+    let mut additional_crates: BTreeSet<_> = [
+        "aho_corasick",
+        "itertools",
+        "http",
+    ].into_iter().collect();
+
     for crate_info in client.crates(query)?.crates.into_iter() {
+        // Ensure we don't rebuild crates that we already require.
+        additional_crates.remove(crate_info.name.as_str());
+
         if let Some(repository) = crate_info.repository.as_deref() {
             if repository.starts_with(GITHUB_PREFIX) {
                 if let Err(e) = process_github_repo(&crate_info, repository, check_semver) {
@@ -279,6 +288,16 @@ fn main() -> anyhow::Result<()> {
             }
         } else {
             println!("Crate {} doesn't have repo information", &crate_info.name);
+        }
+    }
+
+    for additional_crate in additional_crates {
+        let response = client.get_crate(additional_crate)?;
+        let crate_info = response.crate_data;
+        if let Some(repository) = crate_info.repository.as_deref() {
+            if let Err(e) = process_github_repo(&crate_info, repository, check_semver) {
+                failures.push((crate_info, e));
+            }
         }
     }
 
